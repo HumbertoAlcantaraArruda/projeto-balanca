@@ -72,6 +72,7 @@ DEFINE VARIABLE dPesoMaxVolume     AS DECIMAL      NO-UNDO INITIAL 48. /* CONSTA
 DEFINE VARIABLE dPesoMaxBalanca    AS DECIMAL      NO-UNDO INITIAL 49. /* CONSTANTE */
 DEFINE VARIABLE cDescItem          AS CHARACTER NO-UNDO.
 DEFINE VARIABLE cItCodigo          AS CHARACTER NO-UNDO.
+DEFINE VARIABLE cLote              AS CHARACTER NO-UNDO.
 DEFINE VARIABLE iSeqPesar          AS INTEGER   NO-UNDO.
 DEFINE VARIABLE dToleranciaPesagem AS DECIMAL   NO-UNDO INITIAL 2. /* CONSTANTE */
 DEFINE VARIABLE dPesoMinBalanca    AS DECIMAL   NO-UNDO INITIAL 0.005. /* CONSTANTE - 5 g */
@@ -1096,6 +1097,7 @@ PROCEDURE pi-confirmar-pesagem :
     DEFINE VARIABLE lItemFechou   AS LOGICAL   NO-UNDO.
     DEFINE VARIABLE lOPFechou     AS LOGICAL   NO-UNDO.
     DEFINE VARIABLE cAviso        AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE cAvisoPeso    AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cItemFechado  AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cDescOP       AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cSituacaoDesc AS CHARACTER NO-UNDO.
@@ -1122,7 +1124,8 @@ PROCEDURE pi-confirmar-pesagem :
 
     
     
-    RUN pi-valida-peso-volume (INPUT  rVolume,
+    RUN pi-valida-peso-volume (INPUT  iOrdem,
+                               INPUT  rVolume,
                                INPUT  dPeso,
                                OUTPUT lOk,
                                OUTPUT iResultado).
@@ -1163,6 +1166,11 @@ PROCEDURE pi-confirmar-pesagem :
 
         RUN pi-pos-cursor-brPesagem.
 
+        /* o volume mudou: o aviso tem de mostrar o novo X/Y e o novo alvo */
+        RUN pi-monta-aviso-pesagem (OUTPUT cAvisoPeso).
+
+        ASSIGN fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = cAvisoPeso.
+
         ASSIGN fi-peso-item:SCREEN-VALUE IN FRAME fMain = "0".
         APPLY "ENTRY" TO fi-peso-item IN FRAME fMain.
         RETURN.
@@ -1196,6 +1204,7 @@ PROCEDURE pi-confirmar-pesagem :
 
         ASSIGN
             cItCodigo                                    = ""
+            cLote                                        = ""
             cDescItem                                    = ""
             fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = ""
             fi-peso-item:SCREEN-VALUE     IN FRAME fMain = "0".
@@ -1206,90 +1215,20 @@ PROCEDURE pi-confirmar-pesagem :
 
     /* ---- avanca para o proximo componente ---- */
     RUN pi-verificar-item-nao-concluido (OUTPUT cItCodigo,
+                                         OUTPUT cLote,
                                          OUTPUT cDescItem,
                                          OUTPUT iSeqPesar).
 
     RUN pi-pos-cursor-itensReq.
     RUN pi-pos-cursor-brPesagem.
 
+    RUN pi-monta-aviso-pesagem (OUTPUT cAvisoPeso).
+
     ASSIGN
-        fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = cDescItem
+        fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = cAvisoPeso
         fi-peso-item:SCREEN-VALUE     IN FRAME fMain = "0".
 
     APPLY "ENTRY" TO fi-peso-item IN FRAME fMain.
-
-END PROCEDURE.
-
-/* _UIB-CODE-BLOCK-END */
-&ANALYZE-RESUME
-
-&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-cria-componentes wWin 
-PROCEDURE pi-cria-componentes :
-/*------------------------------------------------------------------------------
-  Purpose:     Cria em es_pesagem_componente os itens da OP que ainda nao
-               tem registro.
-  Parameters:  piOrdem (INPUT) - numero da ordem de producao
-  Notes:       Identidade do componente: nr_ordem + item + lote. Depende da
-               tt-req-ord ja montada.
-------------------------------------------------------------------------------*/
-    DEFINE INPUT PARAMETER piOrdem AS INTEGER NO-UNDO.
-
-    DEFINE BUFFER bf-ord   FOR ord-prod.
-    DEFINE BUFFER bf-tt    FOR tt-req-ord.
-    DEFINE BUFFER bf-comp  FOR es_pesagem_componente.
-    DEFINE BUFFER bf-param FOR es_pesagem_param.
-    
-    /*=============================================================
-        BUSCAR ord-prod
-    ===============================================================*/
-
-    FIND FIRST bf-ord NO-LOCK
-        WHERE bf-ord.nr-ord-produ = piOrdem
-        NO-ERROR.
-
-    IF NOT AVAILABLE bf-ord THEN
-        RETURN.
-
-    FOR EACH bf-tt NO-LOCK:
-
-        FIND FIRST bf-comp EXCLUSIVE-LOCK
-            WHERE bf-comp.nr_ordem = piOrdem
-              AND bf-comp.item     = bf-tt.it-codigo
-              AND bf-comp.lote     = bf-tt.lote
-            NO-ERROR.
-
-        IF AVAILABLE bf-comp THEN
-            NEXT.
-
-        
-        FIND FIRST bf-param NO-LOCK
-            WHERE bf-param.item_pai   = bf-ord.it-codigo
-              AND bf-param.item_filho = bf-tt.it-codigo
-            NO-ERROR.
-
-        CREATE bf-comp.
-
-        ASSIGN
-            bf-comp.nr_ordem                     = piOrdem
-            bf-comp.item                         = bf-tt.it-codigo
-            bf-comp.lote                         = bf-tt.lote
-            bf-comp.qt_requisitada               = bf-tt.qt-requisitada
-            bf-comp.capacidade_embalagem         = (IF AVAILABLE bf-param
-                                                    THEN bf-param.capacidade_embalagem
-                                                    ELSE 0)
-            bf-comp.qt_pesada_balanca            = 0
-            bf-comp.qt_embalagens_fechadas       = bf-tt.qt-embalagens
-            bf-comp.qt_volumes                   = 0
-            bf-comp.qt_desvio_requisitada_pesada = 0
-            bf-comp.pc_desvio                    = 0
-            bf-comp.qt_reimpressoes              = 0
-            bf-comp.total_tentativas             = 0
-            bf-comp.situacao                     = (IF bf-tt.qt-pesar < dPesoMinBalanca
-                                                    THEN 3    /* CONCLUIDO - nada a pesar */
-                                                    ELSE 2).  /* EM ANDAMENTO */
-    END.
-
-    RELEASE bf-comp.
 
 END PROCEDURE.
 
@@ -1344,8 +1283,7 @@ PROCEDURE pi-cria-mistura :
   Purpose:     Cria o cabecalho da mistura (es_pesagem_mistura) desta OP quando
                ele ainda nao existe. Ja existindo, nao faz nada.
   Parameters:  piOrdem (INPUT) - numero da ordem de producao
-  Notes:       Depende da tt-req-ord ja montada ? rodar depois de
-               pi-monta-itens-req.
+  Notes:       Le a req-ord direto - nao depende da tt-req-ord estar montada.
 ------------------------------------------------------------------------------*/
     DEFINE INPUT PARAMETER piOrdem AS INTEGER NO-UNDO.
 
@@ -1908,6 +1846,7 @@ PROCEDURE pi-iniciar-pesagem :
     DEFINE VARIABLE iOrdem    AS INTEGER NO-UNDO.
     DEFINE VARIABLE iSeqPesar AS INTEGER NO-UNDO.
     DEFINE VARIABLE lOk       AS LOGICAL NO-UNDO.
+    DEFINE VARIABLE cAviso    AS CHARACTER NO-UNDO.
 
     ASSIGN iOrdem = INTEGER(cOrdemProducao) NO-ERROR.
 
@@ -1932,6 +1871,7 @@ PROCEDURE pi-iniciar-pesagem :
         CAPTURA ITEM QUE AINDA NAO FOI PESADO
     -------------------------------------------------------------------------------*/ 
     RUN pi-verificar-item-nao-concluido (OUTPUT cItCodigo,
+                                         OUTPUT cLote,
                                          OUTPUT cDescItem,
                                          OUTPUT iSeqPesar).
 
@@ -1944,25 +1884,11 @@ PROCEDURE pi-iniciar-pesagem :
         Povoar browser brPesagem
     -------------------------------------------------------------------------------*/ 
 
-    // --- percorre tt-req-ord ---
-    FOR EACH tt-req-ord NO-LOCK:
-
-        CREATE tt-pesagem-item.
-        // --- Se o item ja foi pesado, coloca no browser brPesagem ---
-        IF tt-req-ord.situacao = "CONCLUIDO" THEN DO:
-            ASSIGN
-                tt-pesagem-item.imprimir = YES
-                .   
-        END.
-        ELSE DO:
-            ASSIGN
-                   tt-pesagem-item.imprimir = NO
-                   //tt-pesagem-item.it-codigo
-                   //tt-pesagem-item.desc-item
-                    .
-        END.
-
-    END.
+    /* quem monta a tt-pesagem-item eh a pi-carrega-brPesagem: plano da OP
+       mais o historico sobreposto. Montar aqui de novo duplicaria linha a
+       cada clique no bt-pesagem */
+    RUN pi-carrega-brPesagem   (INPUT iOrdem).
+    RUN pi-pos-cursor-brPesagem.
 
     IF cItCodigo = "" THEN DO:
         MESSAGE "Nenhum item EM ATENDIMENTO nesta OP."
@@ -1973,20 +1899,9 @@ PROCEDURE pi-iniciar-pesagem :
     /*-----------------------------------------------------------------------------
         LIBERA OS CAMPOS DE PESAGEM
     -------------------------------------------------------------------------------*/ 
-    RUN pi-libera-campos-peso (INPUT cDescItem).
+    RUN pi-monta-aviso-pesagem (OUTPUT cAviso).
 
-END PROCEDURE.
-
-/* _UIB-CODE-BLOCK-END */
-&ANALYZE-RESUME
-
-&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-le-balan‡a wWin 
-PROCEDURE pi-le-balan‡a :
-/*------------------------------------------------------------------------------
-  Purpose:     
-  Parameters:  <none>
-  Notes:       
-------------------------------------------------------------------------------*/
+    RUN pi-libera-campos-peso  (INPUT cAviso).
 
 END PROCEDURE.
 
@@ -1996,14 +1911,14 @@ END PROCEDURE.
 &ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-libera-campos-peso wWin 
 PROCEDURE pi-libera-campos-peso :
 /*------------------------------------------------------------------------------
-  Purpose:     Mostra o item a ser pesado em fi-aviso-pesagem e libera os
-               controles de digitacao do peso.
-  Parameters:  pcDescItem (INPUT) - descricao do item que sera pesado
+  Purpose:     Mostra em fi-aviso-pesagem o que o operador tem de pesar e
+               libera os controles de digitacao do peso.
+  Parameters:  pcAviso (INPUT) - texto montado por pi-monta-aviso-pesagem
   Notes:       Nao acessa banco - pode ser chamada de qualquer ponto da tela.
 ------------------------------------------------------------------------------*/
-    DEFINE INPUT PARAMETER pcDescItem AS CHARACTER NO-UNDO.
+    DEFINE INPUT PARAMETER pcAviso AS CHARACTER NO-UNDO.
 
-    ASSIGN fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = pcDescItem.
+    ASSIGN fi-aviso-pesagem:SCREEN-VALUE IN FRAME fMain = pcAviso.
 
     ENABLE fi-peso-item btConfirmarPeso WITH FRAME fMain.
 
@@ -2045,6 +1960,58 @@ ASSIGN
 br-itensReq:QUERY:QUERY-CLOSE().
 br-itensReq:QUERY:QUERY-PREPARE("FOR EACH tt-req-ord").
 br-itensReq:QUERY:QUERY-OPEN().
+
+END PROCEDURE.
+
+/* _UIB-CODE-BLOCK-END */
+&ANALYZE-RESUME
+
+&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-monta-aviso-pesagem wWin 
+PROCEDURE pi-monta-aviso-pesagem :
+/*------------------------------------------------------------------------------
+  PROCEDURE pi-monta-aviso-pesagem
+  Purpose:     Monta o texto do fi-aviso-pesagem: o que o operador tem de
+               pesar agora - item, lote, volume X/Y e peso alvo.
+  Parameters:  pcAviso (OUTPUT) - texto pronto, "" quando nao ha volume
+  Notes:       Le o par cItCodigo + cLote, que eh o que conduz a pesagem, e
+               pega o volume pela pi-volume-corrente - mesmo volume que a
+               pi-confirmar-pesagem vai gravar.
+               X eh o qt-volume da linha corrente e Y o total de linhas
+               PESAGEM daquele item e lote, pendentes ou nao.
+------------------------------------------------------------------------------*/
+    DEFINE OUTPUT PARAMETER pcAviso AS CHARACTER NO-UNDO.
+
+    DEFINE VARIABLE iTotalVol AS INTEGER NO-UNDO.
+    DEFINE VARIABLE rVolume   AS ROWID   NO-UNDO.
+
+    DEFINE BUFFER bf-vol FOR tt-pesagem-item.
+    DEFINE BUFFER bf-cnt FOR tt-pesagem-item.
+
+    RUN pi-volume-corrente (OUTPUT rVolume).
+
+    IF rVolume = ? THEN
+        RETURN.
+
+    FIND bf-vol WHERE ROWID(bf-vol) = rVolume NO-ERROR.
+
+    IF NOT AVAILABLE bf-vol THEN
+        RETURN.
+
+    FOR EACH bf-cnt NO-LOCK
+        WHERE bf-cnt.it-codigo = bf-vol.it-codigo
+          AND bf-cnt.lote      = bf-vol.lote
+          AND bf-cnt.tipo      = "PESAGEM":
+
+        ASSIGN iTotalVol = iTotalVol + 1.
+    END.
+
+    ASSIGN pcAviso = TRIM(bf-vol.desc-item)
+                   + "  -  Lote: " + TRIM(bf-vol.lote)
+                   + "  -  Volume " + TRIM(STRING(bf-vol.qt-volume, ">>>9"))
+                   + "/" + TRIM(STRING(iTotalVol, ">>>9"))
+                   + "  -  Pesar: "
+                   + TRIM(STRING(bf-vol.qt-pesar, "->>>,>>9.9999"))
+                   + " " + TRIM(bf-vol.un).
 
 END PROCEDURE.
 
@@ -2239,141 +2206,6 @@ END PROCEDURE.
 /* _UIB-CODE-BLOCK-END */
 &ANALYZE-RESUME
 
-&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-monta-itens-req wWin 
-PROCEDURE pi-monta-itens-req :
-/*------------------------------------------------------------------------------
-  pi-monta-itens-req
-  Purpose:     Monta a tt-req-ord com um registro por item requisitado da OP e
-               reabre o browse br-itensReq.
-  Parameters:  piOrdem (INPUT) - numero da ordem de producao
-  Notes:       qt-embalagens = embalagens cheias; qt-pesar = sobra fracionada,
-               que vai para a balanca. Sem es_pesagem_param cadastrado, o item
-               inteiro vai para a balanca.
-               A situacao vem de es_pesagem_componente, traduzida por
-               pi-verificar-situacao. Sem componente gravado ainda, assume
-               "EM ANDAMENTO".
-------------------------------------------------------------------------------*/
-    DEFINE INPUT PARAMETER piOrdem AS INTEGER NO-UNDO.   // 1025858
-
-    DEFINE VARIABLE cSituacaoDesc AS CHARACTER NO-UNDO.
-
-    DEFINE BUFFER bf-ord    FOR ord-prod.
-    DEFINE BUFFER bf-req    FOR req-ord.
-    DEFINE BUFFER bf-item   FOR item.
-    DEFINE BUFFER bf-estrut FOR estrutura.
-    DEFINE BUFFER bf-saldo  FOR saldo-estoq.
-    DEFINE BUFFER bf-param  FOR es_pesagem_param.
-    DEFINE BUFFER bf-comp   FOR es_pesagem_componente.
-
-    /*------------------------------------------------------------------------------
-        Localiza a ordem de produ‡Æo
-    ------------------------------------------------------------------------------*/
-    
-    FIND FIRST bf-ord NO-LOCK
-        WHERE bf-ord.nr-ord-produ = piOrdem
-        NO-ERROR.
-
-    IF NOT AVAILABLE bf-ord THEN
-        RETURN.
-
-        
-    /*------------------------------------------------------------------------------
-        Monta os itens requisitados da ordem
-    ------------------------------------------------------------------------------*/
-    FOR EACH bf-req NO-LOCK
-        WHERE bf-req.nr-ord-produ = piOrdem:
-
-        /* descricao e unidade */
-        FIND FIRST bf-item NO-LOCK
-            WHERE bf-item.it-codigo = bf-req.it-codigo
-            NO-ERROR.
-
-        /* quantidade da receita */
-        FIND FIRST bf-estrut NO-LOCK
-            WHERE bf-estrut.it-codigo = bf-ord.it-codigo
-              AND bf-estrut.es-codigo = bf-req.it-codigo 
-            NO-ERROR.
-
-        /* validade do lote */
-        FIND FIRST bf-saldo NO-LOCK
-            WHERE bf-saldo.num-id-saldo-estoq = bf-req.num-id-saldo-estoq
-            NO-ERROR.
-
-        /* capacidade de embalagem */
-        FIND FIRST bf-param NO-LOCK
-            WHERE bf-param.item_pai   = bf-ord.it-codigo
-              AND bf-param.item_filho = bf-req.it-codigo
-            NO-ERROR.
-
-        /* situacao ja gravada para este item */
-        FIND FIRST bf-comp NO-LOCK
-            WHERE bf-comp.nr_ordem = piOrdem
-              AND bf-comp.item     = bf-req.it-codigo
-              AND bf-comp.lote     = bf-req.lote-serie
-            NO-ERROR.
-
-        IF AVAILABLE bf-comp THEN
-            RUN pi-verificar-situacao (INPUT  bf-comp.situacao,
-                                       OUTPUT cSituacaoDesc).
-        ELSE
-            ASSIGN cSituacaoDesc = "EM ANDAMENTO".
-
-        /*------------------------------------------------------------------------------
-            Cria o registro da temp-table
-        ------------------------------------------------------------------------------*/
-        CREATE tt-req-ord.
-
-        ASSIGN
-            tt-req-ord.it-codigo      = bf-req.it-codigo
-            tt-req-ord.lote           = bf-req.lote-serie
-            tt-req-ord.qt-requisitada = bf-req.qtd-requisitd-lote
-            tt-req-ord.situacao       = cSituacaoDesc
-            
-            tt-req-ord.capacidade     = (IF AVAILABLE bf-param
-                                         THEN bf-param.capacidade_embalagem
-                                         ELSE 0)
-
-            tt-req-ord.un             = (IF AVAILABLE bf-item
-                                         THEN bf-item.un
-                                         ELSE "")
-
-            tt-req-ord.desc-item      = (IF AVAILABLE bf-item
-                                         THEN bf-item.desc-item
-                                         ELSE "")
-
-            tt-req-ord.valid-lote     = (IF AVAILABLE bf-saldo
-                                         THEN bf-saldo.dt-vali-lote
-                                         ELSE ?)
-
-            tt-req-ord.qt-receita     = (IF AVAILABLE bf-estrut
-                                         THEN bf-estrut.quant-usada * bf-ord.qt-ordem // ?
-                                         ELSE 0)
-
-            tt-req-ord.qt-embalagens  = (IF AVAILABLE bf-param
-                                            AND bf-param.capacidade_embalagem > 0
-                                         THEN TRUNCATE(bf-req.qtd-requisitd-lote /
-                                                       bf-param.capacidade_embalagem, 0)
-                                         ELSE 0)
-                                              
-            tt-req-ord.qt-pesar       = (IF AVAILABLE bf-param
-                                            AND bf-param.capacidade_embalagem > 0
-                                         THEN bf-req.qtd-requisitd-lote -
-                                              (TRUNCATE(bf-req.qtd-requisitd-lote /
-                                                        bf-param.capacidade_embalagem, 0)
-                                               * bf-param.capacidade_embalagem)
-                                         ELSE bf-req.qtd-requisitd-lote).
-    END.
-
-    /*------------------------------------------------------------------------------
-        Atualiza o browse
-    ------------------------------------------------------------------------------*/
-    {&OPEN-QUERY-br-itensReq}
-
-END PROCEDURE.
-
-/* _UIB-CODE-BLOCK-END */
-&ANALYZE-RESUME
-
 &ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-monta-plano-pesagem wWin 
 PROCEDURE pi-monta-plano-pesagem :
 /*------------------------------------------------------------------------------
@@ -2385,8 +2217,8 @@ PROCEDURE pi-monta-plano-pesagem :
                pi-aplica-logs-pesagem, que roda logo depois.
                Peso sempre em KG. Depende da tt-req-ord montada, entao rodar
                depois de pi-prepara-itens-op.
-               EMBALAGEM eh UMA linha por componente: qt-volume guarda a
-               CONTAGEM de embalagens e qt-pesar o peso de UMA delas.
+               EMB. FECHADA eh UMA linha por embalagem fisica: qt-volume eh
+               o numero sequencial da linha no tipo e qt-pesar o peso de UMA.
                Volume abaixo de dPesoMinBalanca ja nasce concluido - o operador
                separa a olho, aquilo nao vai a balanca.
                Sobra menor que o minimo eh somada no ultimo volume cheio, em
@@ -2507,26 +2339,13 @@ END PROCEDURE.
 /* _UIB-CODE-BLOCK-END */
 &ANALYZE-RESUME
 
-&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-op-esta-finalizada wWin 
-PROCEDURE pi-op-esta-finalizada :
-/*------------------------------------------------------------------------------
-  Purpose:     
-  Parameters:  <none>
-  Notes:       
-------------------------------------------------------------------------------*/
-
-END PROCEDURE.
-
-/* _UIB-CODE-BLOCK-END */
-&ANALYZE-RESUME
-
 &ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-pos-cursor-brPesagem wWin 
 PROCEDURE pi-pos-cursor-brPesagem :
 /*------------------------------------------------------------------------------
   PROCEDURE pi-pos-cursor-brPesagem
   Purpose:     Posiciona a linha corrente do brPesagem no proximo volume
-               pendente do item em cItCodigo. Nao havendo, vai para a ultima
-               linha do browse.
+               pendente do item em cItCodigo e do lote em cLote. Nao havendo,
+               vai para a ultima linha do browse.
   Parameters:  <none>
   Notes:       Usa buffer proprio (bf-vol) - mexer no buffer default
                dessincronizaria a linha destacada do browse.
@@ -2539,6 +2358,7 @@ PROCEDURE pi-pos-cursor-brPesagem :
 
         FIND FIRST bf-vol
             WHERE bf-vol.it-codigo = cItCodigo
+              AND bf-vol.lote      = cLote
               AND bf-vol.tipo      = "PESAGEM"
               AND bf-vol.situacao  = "PENDENTE"
             NO-ERROR.
@@ -2569,8 +2389,8 @@ END PROCEDURE.
 PROCEDURE pi-pos-cursor-itensReq :
 /*------------------------------------------------------------------------------
   Purpose:     Posiciona a linha corrente do browse br-itensReq no item que
-               esta em cItCodigo. Nao encontrando o item (ou com cItCodigo
-               vazio), posiciona na ultima linha do browse.
+               esta em cItCodigo e no lote em cLote. Nao encontrando (ou com
+               cItCodigo vazio), posiciona na ultima linha do browse.
   Parameters:  <none>
   Notes:       Usa buffer proprio (bf-tt) para localizar o registro. Mexer no
                buffer default tt-req-ord aqui dessincronizaria o browse, que
@@ -2584,6 +2404,7 @@ PROCEDURE pi-pos-cursor-itensReq :
     IF cItCodigo <> "" THEN DO:
         FIND FIRST bf-tt
             WHERE bf-tt.it-codigo = cItCodigo
+              AND bf-tt.lote      = cLote
             NO-ERROR.
 
         IF AVAILABLE bf-tt THEN
@@ -2901,19 +2722,6 @@ END PROCEDURE.
 /* _UIB-CODE-BLOCK-END */
 &ANALYZE-RESUME
 
-&ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-processa-pesagem wWin 
-PROCEDURE pi-processa-pesagem :
-/*------------------------------------------------------------------------------
-  Purpose:     
-  Parameters:  <none>
-  Notes:       
-------------------------------------------------------------------------------*/
-
-END PROCEDURE.
-
-/* _UIB-CODE-BLOCK-END */
-&ANALYZE-RESUME
-
 &ANALYZE-SUSPEND _UIB-CODE-BLOCK _PROCEDURE pi-projeta-desvio-componente wWin 
 PROCEDURE pi-projeta-desvio-componente :
 /*------------------------------------------------------------------------------
@@ -3149,7 +2957,8 @@ PROCEDURE pi-valida-peso-volume :
   PROCEDURE pi-valida-peso-volume
   Purpose:     Camada 1 (tela) mais o limite fisico da balanca. Valida o peso
                lido contra o alvo daquele volume.
-  Parameters:  prVolume    (INPUT)  - ROWID do volume na tt-pesagem-item
+  Parameters:  piOrdem     (INPUT)  - numero da ordem de producao
+               prVolume    (INPUT)  - ROWID do volume na tt-pesagem-item
                pdPeso      (INPUT)  - peso informado
                plOk        (OUTPUT) - TRUE quando o peso pode ser gravado
                piResultado (OUTPUT) - codigo do desfecho, gravado no log
@@ -3157,19 +2966,25 @@ PROCEDURE pi-valida-peso-volume :
                  1 - OK
                  2 - peso invalido (zero ou nao numerico)
                  3 - acima do limite da balanca
-                 4 - fora da tolerancia de tela
+                 4 - fora da tolerancia
                  5 - volume invalido
-               A tolerancia de tela eh percentual sobre o alvo do volume, e
-               vale para os dois lados (usa ABSOLUTE).
+               A tolerancia eh percentual sobre o alvo do volume e vale para
+               os dois lados (usa ABSOLUTE). Ela vem da es_pesagem_param do
+               par item pai/filho, cadastrada na escq0004; sem cadastro vale
+               o padrao da tela, dToleranciaPesagem.
 ------------------------------------------------------------------------------*/
+    DEFINE INPUT  PARAMETER piOrdem     AS INTEGER NO-UNDO.
     DEFINE INPUT  PARAMETER prVolume    AS ROWID   NO-UNDO.
     DEFINE INPUT  PARAMETER pdPeso      AS DECIMAL NO-UNDO.
     DEFINE OUTPUT PARAMETER plOk        AS LOGICAL NO-UNDO.
     DEFINE OUTPUT PARAMETER piResultado AS INTEGER NO-UNDO.
 
-    DEFINE VARIABLE dDesvio AS DECIMAL NO-UNDO.
+    DEFINE VARIABLE dDesvio     AS DECIMAL NO-UNDO.
+    DEFINE VARIABLE dTolerancia AS DECIMAL NO-UNDO.
 
-    DEFINE BUFFER bf-vol FOR tt-pesagem-item.
+    DEFINE BUFFER bf-vol   FOR tt-pesagem-item.
+    DEFINE BUFFER bf-ord   FOR ord-prod.
+    DEFINE BUFFER bf-param FOR es_pesagem_param.
 
     FIND bf-vol WHERE ROWID(bf-vol) = prVolume NO-ERROR.
 
@@ -3193,11 +3008,30 @@ PROCEDURE pi-valida-peso-volume :
         RETURN.
     END.
 
+    /* a tolerancia cadastrada para o par item pai/filho manda; item sem
+       cadastro na escq0004 cai no padrao da tela */
+    ASSIGN dTolerancia = dToleranciaPesagem.
+
+    FIND FIRST bf-ord NO-LOCK
+        WHERE bf-ord.nr-ord-produ = piOrdem
+        NO-ERROR.
+
+    IF AVAILABLE bf-ord THEN DO:
+
+        FIND FIRST bf-param NO-LOCK
+            WHERE bf-param.item_pai   = bf-ord.it-codigo
+              AND bf-param.item_filho = bf-vol.it-codigo
+            NO-ERROR.
+
+        IF AVAILABLE bf-param AND bf-param.tolerancia > 0 THEN
+            ASSIGN dTolerancia = bf-param.tolerancia.
+    END.
+
     ASSIGN dDesvio = ABSOLUTE((bf-vol.qt-pesar - pdPeso)
                               / bf-vol.qt-pesar * 100).
     
     
-    IF dDesvio > dToleranciaPesagem THEN DO:
+    IF dDesvio > dTolerancia THEN DO:
         ASSIGN piResultado = 4. /* fora da tolerancia */
 
         MESSAGE
@@ -3205,7 +3039,7 @@ PROCEDURE pi-valida-peso-volume :
             "Alvo do volume: " STRING(bf-vol.qt-pesar, "->>>,>>9.9999") SKIP
             "Foi pesado.......:  " STRING(pdPeso,          "->>>,>>9.9999") SKIP
             "Desvio...............:      " STRING(dDesvio,         "->>9.99") "%" SKIP
-            "Tolerƒncia.........:     " STRING(dToleranciaPesagem, "->>9.99") "%"
+            "Tolerƒncia.........:     " STRING(dTolerancia, "->>9.99") "%"
             VIEW-AS ALERT-BOX ERROR
             BUTTONS OK.
 
@@ -3225,9 +3059,10 @@ END PROCEDURE.
 PROCEDURE pi-verificar-item-nao-concluido :
 /*------------------------------------------------------------------------------
   Purpose:     Percorre os componentes da OP corrente (es_pesagem_componente) e
-               devolve o primeiro item, na ordem de sequencia, cuja situacao
-               seja 2 (em andamento).
+               devolve o primeiro item e lote, na ordem em que a tabela
+               devolver, cuja situacao seja 2 (em andamento).
   Parameters:  pcItem      (OUTPUT) - it-codigo encontrado ("" se nao houver)
+               pcLote      (OUTPUT) - lote do componente ("" se nao houver)
                pcDescItem  (OUTPUT) - descricao do item, em maiusculas
                piSequencia (OUTPUT) - sequencia do componente (0 se nao houver)
   Notes:       Usa buffers proprios (bf-) para nao mexer nos buffers default,
@@ -3235,6 +3070,7 @@ PROCEDURE pi-verificar-item-nao-concluido :
 ------------------------------------------------------------------------------*/
 
     DEFINE OUTPUT PARAMETER pcItem      AS CHARACTER NO-UNDO.
+    DEFINE OUTPUT PARAMETER pcLote      AS CHARACTER NO-UNDO.
     DEFINE OUTPUT PARAMETER pcDescItem  AS CHARACTER NO-UNDO.
     DEFINE OUTPUT PARAMETER piSequencia AS INTEGER   NO-UNDO.
     
@@ -3243,16 +3079,17 @@ PROCEDURE pi-verificar-item-nao-concluido :
     
     ASSIGN
         pcItem      = ""
+        pcLote      = ""
         pcDescItem  = ""
         piSequencia = 0.
     
     FOR EACH bf-comp NO-LOCK
         WHERE bf-comp.nr_ordem = INTEGER(cOrdemProducao)
-          AND bf-comp.situacao = 2 /* EM ATENDIMENTO */
-        BY bf-comp.sequencia:
+          AND bf-comp.situacao = 2 /* EM ATENDIMENTO */:
    
                 ASSIGN
                     pcItem      = bf-comp.item
+                    pcLote      = bf-comp.lote
                     piSequencia = bf-comp.sequencia.
                     
                 FIND FIRST bf-item NO-LOCK
@@ -3304,7 +3141,8 @@ END PROCEDURE.
 PROCEDURE pi-volume-corrente :
 /*------------------------------------------------------------------------------
   PROCEDURE pi-volume-corrente
-  Purpose:     Devolve o ROWID do proximo volume pendente do item corrente.
+  Purpose:     Devolve o ROWID do proximo volume pendente do par item+lote
+               corrente (cItCodigo + cLote).
   Parameters:  prVolume (OUTPUT) - ROWID na tt-pesagem-item, ? se nao houver
   Notes:       Filtra tipo = "PESAGEM" - linha de EMB. FECHADA nao vai a balanca, e
                linha "NAO PESAR" (abaixo de 5 g) tambem fica de fora porque so
@@ -3316,6 +3154,7 @@ PROCEDURE pi-volume-corrente :
 
     FIND FIRST bf-vol
         WHERE bf-vol.it-codigo = cItCodigo
+          AND bf-vol.lote      = cLote
           AND bf-vol.tipo      = "PESAGEM"
           AND bf-vol.situacao  = "PENDENTE"
         NO-ERROR.
