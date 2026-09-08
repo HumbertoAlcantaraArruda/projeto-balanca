@@ -77,6 +77,10 @@ DEFINE VARIABLE dToleranciaPesagem AS DECIMAL   NO-UNDO INITIAL 2. /* CONSTANTE 
 DEFINE VARIABLE dPesoMinBalanca    AS DECIMAL   NO-UNDO INITIAL 0.005. /* CONSTANTE - 5 g */
 DEFINE VARIABLE cOrdemProducao     AS CHARACTER NO-UNDO.
 DEFINE VARIABLE iLarguraEtiqueta   AS INTEGER NO-UNDO INITIAL 40. /* CONSTANTE - colunas */
+/* A fonte da impressora eh proporcional: o hifen eh cerca de 1,73x mais
+   estreito que o "=", entao 40 hifens param bem antes da regua dupla.
+   69 faz a regua simples terminar na mesma coluna. Medido na saida PDF. */
+DEFINE VARIABLE iLarguraSepSimp    AS INTEGER NO-UNDO INITIAL 69. /* CONSTANTE - hifens */
 //DEFINE VARIABLE iAlturaEtiqueta  AS INTEGER NO-UNDO INITIAL 20. /* CONSTANTE - linhas  */
 DEFINE VARIABLE cNomeBalanca       AS CHARACTER NO-UNDO INITIAL "Prix TI 400".
 
@@ -2063,6 +2067,7 @@ PROCEDURE pi-monta-etiqueta :
 
     DEFINE VARIABLE iOrdem    AS INTEGER   NO-UNDO.
     DEFINE VARIABLE iSobra    AS INTEGER   NO-UNDO.
+    DEFINE VARIABLE iTotalVol AS INTEGER   NO-UNDO.
     DEFINE VARIABLE dPeso     AS DECIMAL   NO-UNDO.
     DEFINE VARIABLE cSepDupla AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cSepSimpl AS CHARACTER NO-UNDO.
@@ -2078,6 +2083,7 @@ PROCEDURE pi-monta-etiqueta :
     DEFINE BUFFER bf-ord  FOR ord-prod.
     DEFINE BUFFER bf-item FOR item.
     DEFINE BUFFER bf-log  FOR es_pesagem_log.
+    DEFINE BUFFER bf-cnt  FOR tt-pesagem-item.
 
     FIND bf-vol WHERE ROWID(bf-vol) = prVolume NO-ERROR.
 
@@ -2091,7 +2097,7 @@ PROCEDURE pi-monta-etiqueta :
 
     ASSIGN
         cSepDupla = FILL("=", iLarguraEtiqueta)
-        cSepSimpl = FILL("-", iLarguraEtiqueta).
+        cSepSimpl = FILL("-", iLarguraSepSimp).
 
     /* ---- item pai da ordem ---- */
     FIND FIRST bf-ord NO-LOCK
@@ -2145,16 +2151,34 @@ PROCEDURE pi-monta-etiqueta :
                     THEN bf-vol.qt-pesado
                     ELSE bf-vol.qt-pesar).
 
+    /* ---- X/Y do cabecalho ----
+       quantos volumes deste mesmo item, lote e tipo o plano previu. Nao
+       depende do que foi marcado para imprimir: a etiqueta do volume 2 diz
+       2/2 mesmo quando impressa sozinha */
+    FOR EACH bf-cnt NO-LOCK
+        WHERE bf-cnt.it-codigo = bf-vol.it-codigo
+          AND bf-cnt.lote      = bf-vol.lote
+          AND bf-cnt.tipo      = bf-vol.tipo:
+
+        ASSIGN iTotalVol = iTotalVol + 1.
+    END.
+
     /* ================= desenho ================= */
 
     PUT UNFORMATTED cSepDupla SKIP.
 
     ASSIGN
-        cLinha = " OP " + TRIM(cOrdemProducao)
-        cLinha = cLinha
-               + FILL(" ", MAXIMUM(iLarguraEtiqueta - LENGTH(cLinha)
-                                                    - LENGTH(cDataHora), 1))
-               + cDataHora.
+        cDireita = cDataHora 
+                 + " " 
+                 + "-" 
+                 + " "
+                 + TRIM(STRING(bf-vol.qt-volume, ">>>9"))
+                 + "/" + TRIM(STRING(iTotalVol, ">>>9"))
+        cLinha   = " OP " + TRIM(cOrdemProducao)
+        cLinha   = cLinha
+                 + FILL(" ", MAXIMUM(iLarguraEtiqueta - LENGTH(cLinha)
+                                                      - LENGTH(cDireita), 1))
+                 + cDireita.
 
     PUT UNFORMATTED cLinha    SKIP.
     PUT UNFORMATTED cSepDupla SKIP.
@@ -2183,11 +2207,16 @@ PROCEDURE pi-monta-etiqueta :
     PUT UNFORMATTED cLinha    SKIP.
     PUT UNFORMATTED cSepSimpl SKIP.
 
-    PUT UNFORMATTED " " TRIM(bf-vol.tipo) " "
-                    TRIM(STRING(bf-vol.qt-volume, ">>>9")) SKIP.
+    /* montadas em cLinha como as demais: PUT UNFORMATTED com varias
+       expressoes aplica o formato de cada uma e desalinha na impressora */
+    ASSIGN cLinha = " Tipo ...: " + TRIM(bf-vol.tipo).
 
-    PUT UNFORMATTED " Peso ...: " STRING(dPeso, "->>>,>>9.9999")
-                    " " TRIM(bf-vol.un) SKIP.
+    PUT UNFORMATTED cLinha SKIP.
+
+    ASSIGN cLinha = " Peso ...: " + TRIM(STRING(dPeso, "->>>,>>9.9999"))
+                  + " " + TRIM(bf-vol.un).
+
+    PUT UNFORMATTED cLinha SKIP.
 
     PUT UNFORMATTED cSepDupla SKIP.
 
