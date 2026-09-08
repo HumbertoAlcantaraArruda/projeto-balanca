@@ -1,0 +1,9 @@
+# This repository tracks only the escq0003.w Progress source.
+# Everything else in this folder stays out: client documents and e-mails,
+# Datasul dictionary dumps, .bak snapshots, scratch scripts and local tooling.
+
+*
+
+!.gitignore
+!.gitattributes
+!escq0003.w

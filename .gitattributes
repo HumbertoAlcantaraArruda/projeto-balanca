@@ -1,0 +1,8 @@
+# Progress OpenEdge sources are CP850 with CRLF line endings.
+# Store them byte-exact so git never rewrites line endings or re-encodes them.
+# Diffs stay readable (-text only disables EOL conversion, unlike "binary").
+
+*.w  -text
+*.p  -text
+*.i  -text
+*.cls -text
