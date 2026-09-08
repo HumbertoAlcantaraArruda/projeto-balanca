@@ -1920,6 +1920,11 @@ PROCEDURE pi-iniciar-pesagem :
         RETURN.
 
     /*-----------------------------------------------------------------------------
+        AVISA O QUE O OPERADOR TEM DE SEPARAR A MAO ANTES DE COMECAR
+    -------------------------------------------------------------------------------*/ 
+    RUN pi-avisa-embalagens.
+
+    /*-----------------------------------------------------------------------------
         CAPTURA ITEM QUE AINDA NAO FOI PESADO
     -------------------------------------------------------------------------------*/ 
     RUN pi-verificar-item-nao-concluido (OUTPUT cItCodigo,
