@@ -23,6 +23,17 @@
 /*          This .W file was created with the Progress AB.              */
 /*----------------------------------------------------------------------*/
 
+{include/i-prgvrs.i escq0003 9.99.99.999}
+
+/* Chamada a include do gerenciador de licen‡as. Necessario alterar os parametros */
+/*                                                                                */
+/* <programa>:  Informar qual o nome do programa.                                 */
+/* <m¢dulo>:  Informar qual o m¢dulo a qual o programa pertence.                  */
+
+&IF "{&EMSFND_VERSION}" >= "1.00" &THEN
+    {include/i-license-manager.i <programa> <m¢dulo>}
+&ENDIF
+
 /* Create an unnamed pool to store all the widgets created 
      by this procedure. This is a good default which assures
      that this procedure's triggers and internal procedures 
@@ -366,6 +377,7 @@ ELSE {&WINDOW-NAME} = CURRENT-WINDOW.
 /* ************************* Included-Libraries *********************** */
 
 {src/adm2/containr.i}
+{utp/ut-glob.i}
 
 /* _UIB-CODE-BLOCK-END */
 &ANALYZE-RESUME
@@ -1456,6 +1468,8 @@ PROCEDURE pi-fecha-mistura :
                pcDescOP (OUTPUT) - descricao do item pai da ordem
   Notes:       O total entregue soma as duas partes de cada componente:
                embalagens mais o que passou pela balanca.
+               O operador eh o usuario logado no momento em que o bolo
+               fecha: quem pesou o ultimo componente que deu certo.
 ------------------------------------------------------------------------------*/
     DEFINE INPUT  PARAMETER piOrdem  AS INTEGER   NO-UNDO.
     DEFINE OUTPUT PARAMETER plFechou AS LOGICAL   NO-UNDO.
@@ -1497,6 +1511,10 @@ PROCEDURE pi-fecha-mistura :
     IF NOT AVAILABLE bf-mistura THEN
         RETURN.
 
+    /* operador eh quem fechou o bolo: a mistura so chega aqui quando o
+       ultimo componente concluiu, entao o usuario logado agora eh quem
+       pesou o item que deu certo por ultimo */
+
     ASSIGN
         bf-mistura.qt_pesada_total              = dPesadaTot
         bf-mistura.total_componentes_pesados    = iConcluidos
@@ -1504,7 +1522,8 @@ PROCEDURE pi-fecha-mistura :
                                                 - dEntregueTot
         bf-mistura.situacao                     = 3      /* CONCLUIDO */
         bf-mistura.dt_fim                       = TODAY
-        bf-mistura.hr_fim                       = STRING(TIME, "HH:MM:SS").
+        bf-mistura.hr_fim                       = STRING(TIME, "HH:MM:SS")
+        bf-mistura.operador                     = c-seg-usuario.
 
     RELEASE bf-mistura.
 
