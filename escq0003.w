@@ -2060,8 +2060,8 @@ PROCEDURE pi-monta-etiqueta :
   Notes:       Nao abre nem fecha OUTPUT, e nao dah PAGE - quem controla isso
                eh a pi-imprimir-etiquetas. Assim dah para testar o layout com
                OUTPUT TO "C:/temp/etiqueta.txt" sem gastar papel.
-               A descricao eh truncada no que sobra da largura, para o codigo
-               do item nunca ser cortado.
+               A descricao fica em linha propria, truncada na largura da
+               etiqueta.
 ------------------------------------------------------------------------------*/
     DEFINE INPUT PARAMETER prVolume AS ROWID NO-UNDO.
 
@@ -2072,7 +2072,6 @@ PROCEDURE pi-monta-etiqueta :
     DEFINE VARIABLE cSepDupla AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cSepSimpl AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cLinha    AS CHARACTER NO-UNDO.
-    DEFINE VARIABLE cDireita  AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cCodPai   AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cDescPai  AS CHARACTER NO-UNDO.
     DEFINE VARIABLE cValidade AS CHARACTER NO-UNDO.
@@ -2167,57 +2166,72 @@ PROCEDURE pi-monta-etiqueta :
 
     PUT UNFORMATTED cSepDupla SKIP.
 
+    /* cabecalho: as duas linhas saem centradas na largura da etiqueta */
     ASSIGN
-        cDireita = cDataHora 
-                 + " " 
-                 + "-" 
-                 + " "
-                 + TRIM(STRING(bf-vol.qt-volume, ">>>9"))
-                 + "/" + TRIM(STRING(iTotalVol, ">>>9"))
-        cLinha   = " OP " + TRIM(cOrdemProducao)
-        cLinha   = cLinha
-                 + FILL(" ", MAXIMUM(iLarguraEtiqueta - LENGTH(cLinha)
-                                                      - LENGTH(cDireita), 1))
-                 + cDireita.
+        cLinha = "OP " + TRIM(cOrdemProducao)
+        iSobra = MAXIMUM(INTEGER((iLarguraEtiqueta - LENGTH(cLinha)) / 2), 0)
+        cLinha = FILL(" ", iSobra) + cLinha.
+
+    PUT UNFORMATTED cLinha SKIP.
+
+    ASSIGN
+        cLinha = cDataHora + " - "
+               + TRIM(STRING(bf-vol.qt-volume, ">>>9"))
+               + "/" + TRIM(STRING(iTotalVol, ">>>9"))
+        iSobra = MAXIMUM(INTEGER((iLarguraEtiqueta - LENGTH(cLinha)) / 2), 0)
+        cLinha = FILL(" ", iSobra) + cLinha.
 
     PUT UNFORMATTED cLinha    SKIP.
     PUT UNFORMATTED cSepDupla SKIP.
+    PUT UNFORMATTED ""        SKIP.
 
-    ASSIGN
-        cDireita = " -  Item pai: " + cCodPai
-        iSobra   = MAXIMUM(iLarguraEtiqueta - 1 - LENGTH(cDireita), 1)
-        cLinha   = " " + SUBSTRING(cDescPai, 1, iSobra) + cDireita.
-
-    PUT UNFORMATTED cLinha    SKIP.
-    PUT UNFORMATTED cSepSimpl SKIP.
-
-    ASSIGN
-        cDireita = " - Item ...: " + TRIM(bf-vol.it-codigo)
-        iSobra   = MAXIMUM(iLarguraEtiqueta - 1 - LENGTH(cDireita), 1)
-        cLinha   = " " + SUBSTRING(CAPS(TRIM(bf-vol.desc-item)), 1, iSobra)
-                 + cDireita.
+    /* item pai: descricao e codigo em linhas separadas */
+    ASSIGN cLinha = SUBSTRING(cDescPai, 1, iLarguraEtiqueta).
 
     PUT UNFORMATTED cLinha SKIP.
 
-    ASSIGN cLinha = " Lote: " + TRIM(bf-vol.lote).
-
-    IF cValidade <> "" THEN
-        ASSIGN cLinha = cLinha + " - Validade: " + cValidade.
+    ASSIGN cLinha = "Item pai: " + cCodPai.
 
     PUT UNFORMATTED cLinha    SKIP.
+    PUT UNFORMATTED ""        SKIP.
     PUT UNFORMATTED cSepSimpl SKIP.
+
+    /* componente pesado */
+    ASSIGN cLinha = SUBSTRING(CAPS(TRIM(bf-vol.desc-item)), 1,
+                              iLarguraEtiqueta).
+
+    PUT UNFORMATTED cLinha SKIP.
+
+    ASSIGN cLinha = "Item: " + TRIM(bf-vol.it-codigo).
+
+    PUT UNFORMATTED cLinha SKIP.
+    PUT UNFORMATTED ""     SKIP.
+
+    ASSIGN cLinha = "Lote: " + TRIM(bf-vol.lote).
+
+    PUT UNFORMATTED cLinha SKIP.
+
+    /* lote sem validade cadastrada nao gera a linha */
+    IF cValidade <> "" THEN DO:
+        ASSIGN cLinha = "Validade: " + cValidade.
+
+        PUT UNFORMATTED cLinha SKIP.
+    END.
+
+    PUT UNFORMATTED cSepSimpl SKIP.
+    PUT UNFORMATTED ""        SKIP.
 
     /* montadas em cLinha como as demais: PUT UNFORMATTED com varias
        expressoes aplica o formato de cada uma e desalinha na impressora */
-    ASSIGN cLinha = " Tipo ...: " + TRIM(bf-vol.tipo).
+    ASSIGN cLinha = "TIPO: " + TRIM(bf-vol.tipo).
 
     PUT UNFORMATTED cLinha SKIP.
 
-    ASSIGN cLinha = " Peso ...: " + TRIM(STRING(dPeso, "->>>,>>9.9999"))
+    ASSIGN cLinha = "PESO: " + TRIM(STRING(dPeso, "->>>,>>9.9999"))
                   + " " + TRIM(bf-vol.un).
 
-    PUT UNFORMATTED cLinha SKIP.
-
+    PUT UNFORMATTED cLinha    SKIP.
+    PUT UNFORMATTED ""        SKIP.
     PUT UNFORMATTED cSepDupla SKIP.
 
 END PROCEDURE.
